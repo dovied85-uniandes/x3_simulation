@@ -19,8 +19,8 @@ class X3PlannerNode(Node):
         self.declare_parameter("dist", 1.0)
         distance = self.get_parameter("dist").value
         # Se define el tipo de planeador
-        box = BoxPlanner(5.0, 4.0, 2.0, 6.0, 4.0, 1.0, pi/3)
-        #box = CylinderPlanner(3.0, 2.0, -1.0, -4.0, 1.0)
+        #box = BoxPlanner(5.0, 4.0, 2.0, 6.0, 4.0, 1.0, pi/3)
+        box = CylinderPlanner(3.0, 2.0, -1.0, -4.0, 1.0)
         # Se tranforma el edificio para que el punto inicial de la trayectoria este cerca al origen
         box.transform_by_closest((0, 0, 0))
         # Se planean los puntos de la ruta en marco local(dada la distancia)

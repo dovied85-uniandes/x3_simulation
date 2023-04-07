@@ -236,49 +236,50 @@ class CylinderPlanner(Planner):
     def transform_by_closest(self, pt):
         self.yaw = atan2(pt[1] - self.y, pt[0] - self.x)    
 
-    def spiral(self, distance):
+    def complete_keypoints(self, distance):
+        self.view_pts = []
+        self.path_pts = []
+        self.conns = []
+        # Cara del cilindro
         dl = round(2 * distance * tan(radians(FOV/2)), 2)
         dh = round(dl / AR, 2)
         N = int(ceil(2*pi / min(2*atan(dl / (2*self.radius)), pi/2)))
         L = int(ceil(self.height / dh))
         pts = []
         for k in range(0, L):
-            z = round((-L/2.0 + 0.5 + k)*dh, 2)
+            z = (-L/2.0 + 0.5 + k)*dh
             for i in range(N):
-                theta = clip_angle(2*pi / N * i)
-                x = round((self.radius + distance)*cos(theta), 2)
-                y = round((self.radius + distance)*sin(theta), 2)
-                pts.append((x, y, z, clip_angle(theta + pi), True))         
-        return pts
-
-    def top_floor(self, distance):
-        dl = round(2 * distance * tan(radians(FOV/2)), 2)
-        dh = round(dl / AR, 2)
+                theta = 2*pi / N * i
+                x = (self.radius + distance)*cos(theta)
+                y = (self.radius + distance)*sin(theta)
+                yaw = clip_angle(theta + pi)
+                self.view_pts.append(((x, y, z, yaw), 0.0))
+                if i == 0 or i == N - 1:
+                    vx = 0.0 if i == N - 1 and k == L - 1 else -sin(theta)
+                    vy = 0.0 if i == N - 1 and k == L - 1 else cos(theta)
+                    self.path_pts.append(((x, y, z, yaw), (vx, vy, 0.0, 0.0)))
+                    if i == N - 1 and k == L - 1:
+                        self.conns.append(straight_path_3d)
+                    else:
+                        self.conns.append(partial(arc_3d, self.radius + distance, (0.0, 0.0)))
+        # Techo del cilindro
         N = int(ceil(2*self.radius / dh))
-        z = round(self.height/2.0 + distance, 2)
-        pts = [(self.radius + distance, 0, z, clip_angle(pi), False)]
+        z = self.height/2.0 + distance
+        yaw = pi
+        self.path_pts.append(((x, y, z, yaw), (0.0, 0.0, 0.0, 0.0)))
         for i in range(N):
-            x = round((N/2.0 - 0.5 - i)*dh, 2)
+            x = (N/2.0 - 0.5 - i)*dh
             l = 2*sqrt(self.radius**2 - x**2)
             M = int(ceil(l / dl))
             for j_aux in range(M):
                 j = j_aux if i % 2 == 0 else M - 1 - j_aux
-                y = round((-M/2.0 + 0.5 + j)*dl, 2)
-                pts.append((x, y, z, clip_angle(pi), True))
+                vel_sign = 1 if i % 2 == 0 else -1
+                y = (-M/2.0 + 0.5 + j)*dl
+                self.view_pts.append(((x, y, z, yaw), -90.0))
+                if j == 0 or j == M - 1:
+                    self.path_pts.append(((x, y, z, yaw), (0.0, vel_sign*1.0, 0.0, 0.0)))
+                    self.conns.append(straight_path_3d)    
         return pts
-    
-    def complete_local_trajectory(self, distance, vel):
-        pts = self.complete_viewpoints(distance)
-        path = [pts[0]]
-        prev_pt = None
-        for pt in pts:
-            if prev_pt is not None:
-                if pt[3] == prev_pt[3]:
-                    path += straight_path_3d(prev_pt, pt, vel)
-                else:
-                    path += circle_arc_3d(self.radius + distance, prev_pt, clip_angle(pt[3] - prev_pt[3]), pt[2] - prev_pt[2], vel, pt[4])
-            prev_pt = pt
-        return path
 
     def sdf_string(self):
         return f"<?xml version=\"1.0\" ?>\
@@ -329,16 +330,17 @@ def acceleration_times(x1, v1, x2, v2, T, k=0.25, is_yaw=False):
     a = 2*dv
     b = 4*dx - 2*T*v1*(1 - k) - 2*T*v2*(1 + k)
     c = (k*T)**2*dv + 2*k*T*(T*v1 - dx)
-    t1 = (-b + sqrt(b**2 - 4*a*c))/(2*a)
-    t2 = k*T - t1
-    if t1 >= 0 and t2 >= 0:
-        vc = (2*dx - v1*t1 - v2*t2)/(2*T - t1 - t2)
-        return t1, (vc - v1)/t1, t2, (v2 - vc)/t2
-    t1 = (-b - sqrt(b**2 - 4*a*c))/(2*a)
-    t2 = k*T - t1
-    if t1 >= 0 and t2 >= 0:
-        vc = (2*dx - v1*t1 - v2*t2)/(2*T - t1 - t2)
-        return t1, (vc - v1)/t1, t2, (v2 - vc)/t2
+    if b**2 - 4*a*c >= 0:
+        t1 = (-b + sqrt(b**2 - 4*a*c))/(2*a)
+        t2 = k*T - t1
+        if t1 >= 0 and t2 >= 0:
+            vc = (2*dx - v1*t1 - v2*t2)/(2*T - t1 - t2)
+            return t1, (vc - v1)/t1, t2, (v2 - vc)/t2
+        t1 = (-b - sqrt(b**2 - 4*a*c))/(2*a)
+        t2 = k*T - t1
+        if t1 >= 0 and t2 >= 0:
+            vc = (2*dx - v1*t1 - v2*t2)/(2*T - t1 - t2)
+            return t1, (vc - v1)/t1, t2, (v2 - vc)/t2
     # Aceleraciones en ambos tramos son del mismo signo
     t1 = (2*k*(dx - T*v1) - k**2*T*dv)/(2*(1 - k)*dv)
     t2 = k*T - t1
@@ -356,7 +358,7 @@ def acceleration_times(x1, v1, x2, v2, T, k=0.25, is_yaw=False):
     return None, None, None, None
 
 def straight_path_1d(x1, v1, x2, v2, T, t0, k=0.25, is_yaw=False):
-    t1, a1, t2, a2 = acceleration_times(x1, v1, x2, v2, T, k)
+    t1, a1, t2, a2 = acceleration_times(x1, v1, x2, v2, T, k, is_yaw)
     vc = v1 + a1*t1 if k != 0 else (x2 - x1)/T
     xa = x1 + v1*t1 + a1*t1**2/2
     xb = xa + vc*(T - t1 - t2)
@@ -401,8 +403,8 @@ def arc_3d(radius, center, p1, v1, p2, v2, vel, t0, k=0.25):
 
 #(-pi, pi]
 def clip_angle(angle):
-    if angle <= -pi:
+    while angle <= -pi:
         angle += 2*pi
-    elif angle > pi:
+    while angle > pi:
         angle -= 2*pi
     return angle
