@@ -2,31 +2,43 @@
 import rclpy
 from rclpy.node import Node
 
-from geometry_msgs.msg import Pose, PoseArray
+from geometry_msgs.msg import Pose, PoseArray, Vector3
 from ros_gz_interfaces.msg import Marker
-from ros_gz_interfaces.srv import SpawnEntity, ManageMarkers
+from ros_gz_interfaces.srv import SpawnEntity, ManageMarker, ManageMarkers
 from drone_interfaces.srv import GetTrajectoryPose, GetViewpoint
 
-from math import sin, cos, pi
+from math import sin, cos, pi, ceil
 from .planning import BoxPlanner, CylinderPlanner
 
 
 class X3PlannerNode(Node):
     def __init__(self):
         super().__init__("X3_planner")
-        box = BoxPlanner(5.0, 4.0, 2.0, 6.0, 4.0, 1.0, pi/3)
-        #box = CylinderPlanner(3.0, 2.0, -1.0, -4.0, 1.0)
-        box.transform_by_closest((0, 0, 0))
         self.declare_parameter("vel", 0.1)
         vel = self.get_parameter("vel").value
-        self.path_ = box.complete_world_trajectory((0,0,0,0), 2.0, vel) #(x,y,z,yaw,is_VP)
+        self.declare_parameter("dist", 1.0)
+        distance = self.get_parameter("dist").value
+        # Se define el tipo de planeador
+        box = BoxPlanner(5.0, 4.0, 2.0, 6.0, 4.0, 1.0, pi/3)
+        #box = CylinderPlanner(3.0, 2.0, -1.0, -4.0, 1.0)
+        # Se tranforma el edificio para que el punto inicial de la trayectoria este cerca al origen
+        box.transform_by_closest((0, 0, 0))
+        # Se planean los puntos de la ruta en marco local(dada la distancia)
+        box.complete_keypoints(distance)
+        # Se agregan los puntos del despegue del dron
+        box.prepend_point((0,0,1,0), (0,0,0,0))
+        box.prepend_point((0,0,0,0), (0,0,0,0))
+        # Se planea la trayectoria completa en marco local (dada la velocidad y factor de suavizado k)
+        box.complete_world_trajectory(vel, k=0.5)
+        self.path_= box.get_trajectory() #(x,y,z,yaw)
         self.current_path_idx_ = 0
         # Load the box in the simulator
         self.add_building_to_world(box)
         # Load the markers in the simulator
-        self.markers_ = list(filter(lambda pt: pt[4], self.path_))
+        self.markers_ = box.get_viewpoints() #((x, y, z, yaw), gimbal_degrees)
         self.current_marker_idx_ = 0
         self.add_markers_to_world()
+        self.draw_path()
         # Trajectory publisher
         self.trajectory_publisher_ = self.create_publisher(Pose, "X3/trajectory_pose", 10)
         self.create_timer(0.1, self.publish_trajectory_pose)
@@ -45,11 +57,12 @@ class X3PlannerNode(Node):
             self.current_path_idx_ += 1
   
     def callback_get_viewpoint(self, request, response):
-        viewpoint = self.markers_[self.current_marker_idx_]
+        viewpoint = self.markers_[self.current_marker_idx_][0]
+        gimbal_deg = self.markers_[self.current_marker_idx_][1]
         response.viewpoint.id = self.current_marker_idx_ + 1
         response.viewpoint.pose.position.x, response.viewpoint.pose.position.y, response.viewpoint.pose.position.z = viewpoint[0:3]
         response.viewpoint.pose.orientation.z, response.viewpoint.pose.orientation.w = sin(viewpoint[3]/2), cos(viewpoint[3]/2)
-        response.viewpoint.gimbal_angle = 0.0 # FALTA AGREGAR EL ANGULO A LOS VIEWPOINTS
+        response.viewpoint.gimbal_angle = gimbal_deg
         self.current_marker_idx_ += 1
         if self.current_marker_idx_ == len(self.markers_):
             self.current_marker_idx_ = 0
@@ -76,7 +89,7 @@ class X3PlannerNode(Node):
     def add_markers_to_world(self):
         client = self.create_client(ManageMarkers, "marker_array")
         req = ManageMarkers.Request()
-        for i, pt in enumerate(self.markers_):
+        for i, (pt, _) in enumerate(self.markers_):
             mk = Marker()
             mk.action = 0
             mk.id = i + 1
@@ -95,6 +108,23 @@ class X3PlannerNode(Node):
             response = future.result()
         except Exception as e:
             self.get_logger().error("Service call failed %r" % (e,))
+    
+    def draw_path(self):
+        client = self.create_client(ManageMarker, "marker")
+        req = ManageMarker.Request()
+        req.marker.action = 0
+        req.marker.id = 999999
+        req.marker.type = 5
+        req.marker.material.diffuse.r, req.marker.material.diffuse.g, req.marker.material.diffuse.b, req.marker.material.diffuse.a = 0.0, 0.0, 1.0, 0.5
+        req.marker.scale.x, req.marker.scale.y, req.marker.scale.z = 1.0, 1.0, 1.0
+        for x, y, z, _ in self.path_[::ceil(len(self.path_)/1000.0)]:
+            pt = Vector3()
+            pt.x, pt.y, pt.z = x, y, z
+            req.marker.point.append(pt)
+        # we don't need to wait for a response, so we just call the service:
+        while not client.wait_for_service(1.0):
+            self.get_logger().warn("Waiting for service Manage Marker...")
+        client.call_async(req)
     
 
 def main(args=None):
