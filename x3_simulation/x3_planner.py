@@ -8,7 +8,7 @@ from ros_gz_interfaces.srv import SpawnEntity, ManageMarker, ManageMarkers
 from drone_interfaces.srv import GetTrajectoryPose, GetViewpoint
 
 from math import sin, cos, pi, ceil
-from .planning import BoxPlanner, CylinderPlanner
+from .planning import BoxPlanner, CylinderPlanner, PlanePlanner
 
 
 class X3PlannerNode(Node):
@@ -20,7 +20,8 @@ class X3PlannerNode(Node):
         distance = self.get_parameter("dist").value
         # Se define el tipo de planeador
         #box = BoxPlanner(5.0, 4.0, 2.0, 6.0, 4.0, 1.0, pi/3)
-        box = CylinderPlanner(3.0, 2.0, -1.0, -4.0, 1.0)
+        #box = CylinderPlanner(2.0, 2.0, -1.0, -4.0, 5.0)
+        box = PlanePlanner(8, 8, 0, 0, 5, yaw=0, roll=0)
         # Se tranforma el edificio para que el punto inicial de la trayectoria este cerca al origen
         box.transform_by_closest((0, 0, 0))
         # Se planean los puntos de la ruta en marco local(dada la distancia)
@@ -74,7 +75,10 @@ class X3PlannerNode(Node):
         req.entity_factory.sdf = building.sdf_string()
         req.entity_factory.name = 'building'
         req.entity_factory.pose.position.x, req.entity_factory.pose.position.y, req.entity_factory.pose.position.z = building.x, building.y, building.z
-        req.entity_factory.pose.orientation.z, req.entity_factory.pose.orientation.w = sin(building.yaw/2), cos(building.yaw/2)
+        req.entity_factory.pose.orientation.x = sin(building.roll/2)*cos(building.yaw/2)
+        req.entity_factory.pose.orientation.y = sin(building.roll/2)*sin(building.yaw/2)
+        req.entity_factory.pose.orientation.z = cos(building.roll/2)*sin(building.yaw/2)
+        req.entity_factory.pose.orientation.w = cos(building.roll/2)*cos(building.yaw/2)
         while not client.wait_for_service(1.0):
             self.get_logger().warn("Waiting for service Spawn Entity...")
         future = client.call_async(req)

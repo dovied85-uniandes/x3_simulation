@@ -16,8 +16,8 @@ Tm = 0.1
 
 # Ley de Control: Kp + Ki*Tm/(1-z^-1) + Kd/(Tm + tau)*(1-z^-1)/(1-tau/(Tm + tau)*z^-1)
 # K_COEFS = [[Kd_Vx, Ki_Vx, Kd_Vx, tau_Vx], [Kd_Vy, Ki_Vy, Kd_Vy, tau_Vy], [Kd_Vz, Ki_Vz, Kd_Vz, tau_Vz], [Kd_Wz, Ki_Wz, Kd_Wz, tau_Wz]]
-K_COEFS = [[1.5, 0.5, 0.5, 0.025], [1.5, 0.5, 0.5, 0.025], [1.5, 0.5, 0.5, 0.025], [1.5, 0.5, 0.5, 0.025]]
-#K_COEFS = [[2, 0, 0, 0], [2, 0, 0, 0], [2, 0, 0, 0], [2, 0, 0, 0]]
+#K_COEFS = [[1.5, 0.5, 0.5, 0.025], [1.5, 0.5, 0.5, 0.025], [1.5, 0.5, 0.5, 0.025], [1.5, 0.5, 0.5, 0.025]]
+K_COEFS = [[2, 0, 0, 0], [2, 0, 0, 0], [2, 0, 0, 0], [2, 0, 0, 0]]
 
 class X3ControllerNode(Node):
     def __init__(self):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from math import pi, ceil, sin, cos, tan, radians, sqrt, atan, atan2
+from math import pi, ceil, sin, cos, tan, degrees, radians, sqrt, atan, atan2
 from functools import partial
 
 FOV = 79
@@ -32,10 +32,10 @@ class Planner():
         return list(map(self.to_world, self.trajectory))
 
     # Transforma un punto o vector de coordenadas locales a globales
-    def to_world(self, pt):
-        x = cos(self.yaw)*pt[0] - sin(self.yaw)*pt[1] + self.x
-        y = sin(self.yaw)*pt[0] + cos(self.yaw)*pt[1] + self.y
-        z = pt[2] + self.z
+    def to_world(self, pt, vector=False):
+        x =  cos(self.yaw)*pt[0] - sin(self.yaw)*cos(self.roll)*pt[1] + sin(self.yaw)*sin(self.roll)*pt[2] + (0.0 if vector else self.x)
+        y =  sin(self.yaw)*pt[0] + cos(self.yaw)*cos(self.roll)*pt[1] - cos(self.yaw)*sin(self.roll)*pt[2] + (0.0 if vector else self.y)
+        z =                                      sin(self.roll)*pt[1]               + cos(self.roll)*pt[2] + (0.0 if vector else self.z)
         if len(pt) == 3:
             return (x, y, z)
         yaw = clip_angle(pt[3] + self.yaw)
@@ -43,9 +43,12 @@ class Planner():
     
     # Transforma un punto o vector de coordenadas globales a locales
     def to_local(self, pt, vector=False):
-        x =  cos(self.yaw)*pt[0] + sin(self.yaw)*pt[1] + (0.0 if vector else -cos(self.yaw)*self.x - sin(self.yaw)*self.y)
-        y = -sin(self.yaw)*pt[0] + cos(self.yaw)*pt[1] + (0.0 if vector else  sin(self.yaw)*self.x - cos(self.yaw)*self.y)
-        z = pt[2] + (0.0 if vector else -self.z)
+        tx =                 cos(self.yaw)*self.x +                sin(self.yaw)*self.y
+        ty = -cos(self.roll)*sin(self.yaw)*self.x + cos(self.roll)*cos(self.yaw)*self.y + sin(self.roll)*self.z
+        tz =  sin(self.roll)*sin(self.yaw)*self.x - sin(self.roll)*cos(self.yaw)*self.y + cos(self.roll)*self.z
+        x =                 cos(self.yaw)*pt[0] +                sin(self.yaw)*pt[1]                        + (0.0 if vector else -tx)
+        y = -cos(self.roll)*sin(self.yaw)*pt[0] + cos(self.roll)*cos(self.yaw)*pt[1] + sin(self.roll)*pt[2] + (0.0 if vector else -ty)
+        z =  sin(self.roll)*sin(self.yaw)*pt[0] - sin(self.roll)*cos(self.yaw)*pt[1] + cos(self.roll)*pt[2] + (0.0 if vector else -tz)
         yaw = clip_angle(pt[3] + (0.0 if vector else -self.yaw))
         return (x, y, z, yaw)
 
@@ -67,6 +70,128 @@ class Planner():
             self.trajectory += traj_segm
 
 
+class PlanePlanner(Planner):
+
+    def __init__(self, length, width, x, y, z, yaw=0, roll=0):
+        self.length = 1.0*length
+        self.width = 1.0*width
+        self.x = 1.0*x
+        self.y = 1.0*y
+        self.z = 1.0*z
+        self.yaw = 1.0*yaw
+        self.roll = 1.0*roll
+    
+    def transform_by_closest(self, pt):
+        corners = [(-self.length/2, -self.width/2, 0), (self.length/2, -self.width/2, 0), (self.length/2, self.width/2, 0), (-self.length/2, self.width/2, 0)]
+        corners = list(map(self.to_world, corners))
+        ds = list(map(lambda p: (p[0]-pt[0])**2 + (p[1]-pt[1])**2 + (p[2]-pt[2])**2, corners))
+        min_d = min(ds)
+        self.closest_pt = 0
+        if ds[1] == min_d:
+            self.closest_pt = 1
+            if self.roll == 0:
+                self.length, self.width = self.width, self.length
+                self.yaw = clip_angle(self.yaw + pi/2)
+        elif ds[2] == min_d:
+            self.closest_pt = 2
+            if self.roll == 0:
+                self.yaw = clip_angle(self.yaw + pi)
+        elif ds[3] == min_d:
+            self.closest_pt = 3
+            if self.roll == 0:
+                self.length, self.width = self.width, self.length
+                self.yaw = clip_angle(self.yaw - pi/2)
+    
+    def complete_keypoints(self, distance, pt0=(0,0,0,0)):
+        dl = 2*distance*tan(radians(FOV/2))
+        dh = dl / AR
+        M = int(ceil(self.length / dl))
+        N = int(ceil(self.width / dh))
+        yaw = pi/2
+        self.view_pts = []
+        self.path_pts = []
+        self.conns = []
+        # Puntos iniciales de seguridad (si se comienza por la parte posterior del plano):
+        pt0 = self.to_local(pt0)
+        x1, x2, y1, y2 = (1-M)*0.5*dl, (M-1)*0.5*dl, (1-N)*0.5*dh, (N-1)*0.5*dh
+        safe_pts = [(x1 - distance, y1, 0), (x1, y1 - distance, 0), (x2, y1 - distance, 0), (x2 + distance, y1, 0), (x2 + distance, y2, 0), (x2, y2 + distance, 0), (x1, y2 + distance, 0), (x1 - distance, y2, 0)]
+        safe_pts_distances = list(map(lambda pt: (pt[0] - pt0[0])**2 + (pt[1] - pt0[1])**2 + (pt[2] - pt0[2])**2, safe_pts))
+        min_idx = safe_pts_distances.index(min(safe_pts_distances))
+        if pt0[2] < 0:
+            x, y, z = safe_pts[min_idx]
+            self.path_pts.append(((x, y, z, yaw), (0.0, 0.0, 1.0, 0.0)))
+            self.conns.append(straight_path_3d)
+            vx = 1.0 if min_idx in [0,7] else -1.0 if min_idx in [3,4] else 0.0
+            vy = 1.0 if min_idx in [1,2] else -1.0 if min_idx in [5,6] else 0.0
+            self.path_pts.append(((x, y, distance, yaw), (vx, vy, 0.0, 0.0)))
+            self.conns.append(straight_path_3d)
+        if min_idx < 2:
+            i, j, vi, vj = 0, 0, 1, 1
+        elif min_idx < 4:
+            i, j, vi, vj = M-1, 0, -1, 1
+        elif min_idx < 6:
+            i, j, vi, vj = M-1, N-1, -1, -1
+        else:
+            i, j, vi, vj = 0, N-1, 1, -1
+        z = distance
+        while i >= 0 and i < M and j >= 0 and j < N:
+            x = (-M/2.0 + 0.5 + i)*dl
+            y = (-N/2.0 + 0.5 + j)*dh
+            self.view_pts.append(((x, y, z, yaw), -90.0 + degrees(self.roll)))
+            # movimiento horizontal
+            if M >= N:
+                if i == 0 or i == M - 1:
+                    self.path_pts.append(((x, y, z, yaw), (vi*1.0, 0.0, 0.0, 0.0)))
+                    self.conns.append(straight_path_3d)
+                if (i == M - 1 and vi == 1) or (i == 0 and vi == -1):
+                    j += vj
+                    vi *= -1
+                else:
+                    i += vi
+            # movimiento vertical
+            else:
+                if j == 0 or j == N - 1:
+                    self.path_pts.append(((x, y, z, yaw), (0.0, vj*1.0, 0.0, 0.0)))
+                    self.conns.append(straight_path_3d)
+                if (j == N - 1 and vj == 1) or (j == 0 and vj == -1):
+                    i += vi
+                    vj *= -1
+                else:
+                    j += vj
+    
+    def sdf_string(self):
+        return f"<?xml version=\"1.0\" ?>\
+        <sdf version=\"1.6\">\
+            <model name=\"test_box\">\
+                <static>true</static>\
+                <link name=\"link\">\
+                    <!--\
+                    <collision name=\"collision\">\
+                        <geometry>\
+                            <plane>\
+                                <normal>0 0 1</normal>\
+                                <size>{self.length} {self.width}</size>\
+                            </plane>\
+                        </geometry>\
+                    </collision>\
+                    -->\
+                    <visual name=\"visual\">\
+                        <geometry>\
+                            <plane>\
+                                <normal>0 0 1</normal>\
+                                <size>{self.length} {self.width}</size>\
+                            </plane>\
+                        </geometry>\
+                        <material>\
+                            <ambient>0.2 0.2 0.2 1.0</ambient>\
+                            <diffuse>0.5 1.0 1.0 1.0</diffuse>\
+                            <specular>0.0 0.0 0.0 1.0</specular>\
+                        </material>\
+                    </visual>\
+                </link>\
+            </model>\
+        </sdf>"
+
 
 class BoxPlanner(Planner):
 
@@ -78,6 +203,7 @@ class BoxPlanner(Planner):
         self.y = y
         self.z = z
         self.yaw = yaw
+        self.roll = 0
 
     def transform_by_closest(self, pt):
         corners = [(-self.length/2, -self.width/2, -self.height/2), (self.length/2, -self.width/2, -self.height/2), (self.length/2, self.width/2, -self.height/2), (-self.length/2, self.width/2, -self.height/2)]
@@ -93,7 +219,7 @@ class BoxPlanner(Planner):
             self.length, self.width = self.width, self.length
             self.yaw = clip_angle(self.yaw - pi/2)
         
-    def complete_keypoints(self, distance):
+    def complete_keypoints(self, distance, pt0=(0,0,0,0)):
         dl = 2*distance*tan(radians(FOV/2))
         dh = dl / AR
         M = int(ceil(self.length / dl))
@@ -102,6 +228,11 @@ class BoxPlanner(Planner):
         self.view_pts = []
         self.path_pts = []
         self.conns = []
+        # Punto inicial de seguridad (si se comienza muy cerca al edificio):
+        pt0 = self.to_local(pt0)
+        if pt[0] < -self.length/2 and pt[1] > -self.width/2:
+            self.path_pts.append(((-self.length/2 - distance, -self.width/2 - distance, (-L/2.0 + 0.5)*dh, pi/2), (1.0, 0.0, 0.0, 0.0)))
+            self.conns.append(straight_path_3d)
         # Las 4 caras:
         for k in range(0, L):
             z = (-L/2.0 + 0.5 + k)*dh
@@ -198,6 +329,7 @@ class BoxPlanner(Planner):
         return f"<?xml version=\"1.0\" ?>\
         <sdf version=\"1.6\">\
             <model name=\"test_box\">\
+                <static>true</static>\
                 <link name=\"link\">\
                     <collision name=\"collision\">\
                         <geometry>\
@@ -232,6 +364,7 @@ class CylinderPlanner(Planner):
         self.y = y
         self.z = z
         self.yaw = 0
+        self.roll = 0
 
     def transform_by_closest(self, pt):
         self.yaw = atan2(pt[1] - self.y, pt[0] - self.x)    
@@ -285,6 +418,7 @@ class CylinderPlanner(Planner):
         return f"<?xml version=\"1.0\" ?>\
         <sdf version=\"1.6\">\
             <model name=\"test_box\">\
+                <static>true</static>\
                 <link name=\"link\">\
                     <collision name=\"collision\">\
                         <geometry>\
@@ -316,6 +450,17 @@ class CylinderPlanner(Planner):
 
 # retorna: t1, a1, t2, a2
 def acceleration_times(x1, v1, x2, v2, T, k=0.25, is_yaw=False):
+    if k == 0:
+        return 0, 0, 0, 0
+    dx = x2 - x1 if not is_yaw else clip_angle(x2 - x1)
+    t1 = t2 = k*T/2
+    vc = (2*dx - k*T/2*(v1 + v2))/(2*T - k*T)
+    a1 = (vc - v1)/t1
+    a2 = (v2 - vc)/t2
+    return t1, a1, t2, a2
+
+# retorna: t1, a1, t2, a2
+def acceleration_times_2(x1, v1, x2, v2, T, k=0.25, is_yaw=False):
     if k == 0:
         return 0, 0, 0, 0
     dx = x2 - x1 if not is_yaw else clip_angle(x2 - x1)

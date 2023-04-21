@@ -30,7 +30,7 @@ class X3CameraTaskNode(Node):
         try:
             response = future.result()
             self.target_marker_ = response.viewpoint
-            self.get_logger().info(f"Viewpoint #{self.target_marker_.id} received.")
+            self.get_logger().info(f"Viewpoint #{self.target_marker_.id} received. Gimbal angle: {response.viewpoint.gimbal_angle:.2f}")
         except Exception as e:
             self.get_logger().error("Service call failed %r" % (e,))
 

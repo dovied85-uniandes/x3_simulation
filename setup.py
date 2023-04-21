@@ -23,7 +23,8 @@ setup(
             "x3_controller = x3_simulation.x3_controller:main",
             "x3_localizer = x3_simulation.x3_localizer:main",
             "x3_planner = x3_simulation.x3_planner:main",
-            "x3_camera_task = x3_simulation.x3_camera_task:main"
+            "x3_camera_task = x3_simulation.x3_camera_task:main",
+            "x3_speed_test = x3_simulation.x3_speed_test:main"
         ],
     },
 )
