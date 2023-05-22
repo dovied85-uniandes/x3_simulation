@@ -19,16 +19,19 @@ class X3PlannerNode(Node):
         self.declare_parameter("dist", 1.0)
         distance = self.get_parameter("dist").value
         # Se define el tipo de planeador
-        #box = BoxPlanner(5.0, 4.0, 2.0, 6.0, 4.0, 1.0, pi/3)
-        #box = CylinderPlanner(2.0, 2.0, -1.0, -4.0, 5.0)
-        box = PlanePlanner(8, 8, 0, 0, 5, yaw=0, roll=0)
+        #box = BoxPlanner(10.0, 8.0, 4.0, 24.0, 21.0, 4.0, pi/10)
+        #box = CylinderPlanner(4.0, 4.0, 10.0, 5.0, 6.0)
+        box = PlanePlanner(25, 25, 12.5, -15.0, 12.5, yaw=pi, roll=pi/2)
         # Se tranforma el edificio para que el punto inicial de la trayectoria este cerca al origen
         box.transform_by_closest((0, 0, 0))
         # Se planean los puntos de la ruta en marco local(dada la distancia)
         box.complete_keypoints(distance)
         # Se agregan los puntos del despegue del dron
-        box.prepend_point((0,0,1,0), (0,0,0,0))
+        #box.prepend_point((0,0,1,0), (0,0,0,0))
         box.prepend_point((0,0,0,0), (0,0,0,0))
+        # Se regresa el dron al home
+        #box.append_point((0,0,box.height/2+box.z,0), (0,0,-1,0))
+        box.append_point((0,0,1,0), (0,0,0,0))
         # Se planea la trayectoria completa en marco local (dada la velocidad y factor de suavizado k)
         box.complete_world_trajectory(vel, k=0.5)
         self.path_= box.get_trajectory() #(x,y,z,yaw)
@@ -36,7 +39,7 @@ class X3PlannerNode(Node):
         # Load the box in the simulator
         self.add_building_to_world(box)
         # Load the markers in the simulator
-        self.markers_ = box.get_viewpoints() #((x, y, z, yaw), gimbal_degrees)
+        self.markers_ = box.get_viewpoints() #((x, y, z, yaw), gimbal_degrees, (face_id, row_id, col_id))
         self.current_marker_idx_ = 0
         self.add_markers_to_world()
         self.draw_path()
@@ -93,7 +96,7 @@ class X3PlannerNode(Node):
     def add_markers_to_world(self):
         client = self.create_client(ManageMarkers, "marker_array")
         req = ManageMarkers.Request()
-        for i, (pt, _) in enumerate(self.markers_):
+        for i, (pt, _, _) in enumerate(self.markers_):
             mk = Marker()
             mk.action = 0
             mk.id = i + 1

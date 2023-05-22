@@ -17,7 +17,7 @@ class Planner():
         pass
 
     # Calcula los puntos de vista y los puntos de la trayectoria (en marco local) y las conexiones entre los puntos de trayectoria
-    # view_pt: ((x, y, z, yaw), gimbal_degrees)
+    # view_pt: ((x, y, z, yaw), gimbal_degrees, (face_id, row_id, col_id)
     # path_pt: ((x, y, z, yaw), (Vx, Vy, Vz, Omega)) --> velocidades normalizadas!
     # conn:    function
     def complete_keypoints(self, distance):
@@ -25,7 +25,7 @@ class Planner():
 
     # Retorna los viewpoints en coordenas globales:
     def get_viewpoints(self):
-        return list(map(lambda x: (self.to_world(x[0]), x[1]), self.view_pts))
+        return list(map(lambda x: (self.to_world(x[0]), x[1], x[2]), self.view_pts))
     
     # Retorna la trayectoria en coordenas globales:
     def get_trajectory(self):
@@ -56,6 +56,11 @@ class Planner():
     def prepend_point(self, p, v):
         self.path_pts.insert(0, (self.to_local(p), self.to_local(v, True)))
         self.conns.insert(0, straight_path_3d)
+
+    # Agrega un punto (en coordenadas globales) al final de la trayectoria, para unirlo por línea recta
+    def append_point(self, p, v):
+        self.path_pts.append((self.to_local(p), self.to_local(v, True)))
+        self.conns.append(straight_path_3d)
 
     # Calcula la trayectoria completa (en marco local)
     # Cada elemento de la trayectoria final es: (x, y, z, yaw)
@@ -137,7 +142,7 @@ class PlanePlanner(Planner):
         while i >= 0 and i < M and j >= 0 and j < N:
             x = (-M/2.0 + 0.5 + i)*dl
             y = (-N/2.0 + 0.5 + j)*dh
-            self.view_pts.append(((x, y, z, yaw), -90.0 + degrees(self.roll)))
+            self.view_pts.append(((x, y, z, yaw), -90.0 + degrees(self.roll), (0, j, i)))
             # movimiento horizontal
             if M >= N:
                 if i == 0 or i == M - 1:
@@ -158,6 +163,14 @@ class PlanePlanner(Planner):
                     vj *= -1
                 else:
                     j += vj
+        # Regresar al punto inicial
+        if pt0[2] < 0:
+            p, (vx, vy, vz, w) = self.path_pts[1]
+            self.path_pts.append((p, (-vx, -vy, -vz, 0.0)))
+            self.conns.append(straight_path_3d)
+        p, (vx, vy, vz, w) = self.path_pts[0]
+        self.path_pts.append((p, (-vx, -vy, -vz, 0.0)))
+        self.conns.append(straight_path_3d)
     
     def sdf_string(self):
         return f"<?xml version=\"1.0\" ?>\
@@ -230,7 +243,7 @@ class BoxPlanner(Planner):
         self.conns = []
         # Punto inicial de seguridad (si se comienza muy cerca al edificio):
         pt0 = self.to_local(pt0)
-        if pt[0] < -self.length/2 and pt[1] > -self.width/2:
+        if pt0[0] < -self.length/2 and pt0[1] > -self.width/2:
             self.path_pts.append(((-self.length/2 - distance, -self.width/2 - distance, (-L/2.0 + 0.5)*dh, pi/2), (1.0, 0.0, 0.0, 0.0)))
             self.conns.append(straight_path_3d)
         # Las 4 caras:
@@ -245,7 +258,7 @@ class BoxPlanner(Planner):
                 self.conns.append(straight_path_3d)
             for i in range(0, M):
                 x = (-M/2.0 + 0.5 + i)*dl
-                self.view_pts.append(((x, y, z, yaw), 0.0))
+                self.view_pts.append(((x, y, z, yaw), 0.0, (0, k, i)))
                 if i == 0 and k == 0:
                     self.path_pts.append(((x, y, z, yaw), (1.0, 0.0, 0.0, 0.0)))
                     self.conns.append(straight_path_3d)
@@ -260,7 +273,7 @@ class BoxPlanner(Planner):
             self.conns.append(straight_path_3d)
             for j in range(0, N):
                 y = (-N/2.0 + 0.5 + j)*dl
-                self.view_pts.append(((x, y, z, yaw), 0.0))
+                self.view_pts.append(((x, y, z, yaw), 0.0, (1, k, j)))
             y = self.width/2.0
             self.path_pts.append(((x, y, z, yaw), (0.0, 1.0, 0.0, 0.0)))
             self.conns.append(partial(arc_3d, distance, (self.length/2.0, self.width/2.0)))
@@ -272,7 +285,7 @@ class BoxPlanner(Planner):
             self.conns.append(straight_path_3d)
             for i in range(0, M):
                 x = (M/2.0 - 0.5 - i)*dl
-                self.view_pts.append(((x, y, z, yaw), 0.0))
+                self.view_pts.append(((x, y, z, yaw), 0.0, (2, k, i)))
             x = -self.length/2.0
             self.path_pts.append(((x, y, z, yaw), (-1.0, 0.0, 0.0, 0.0)))
             self.conns.append(partial(arc_3d, distance, (-self.length/2.0, self.width/2.0)))
@@ -284,7 +297,7 @@ class BoxPlanner(Planner):
             self.conns.append(straight_path_3d)
             for j in range(0, N):
                 y = (N/2.0 - 0.5 - j)*dl
-                self.view_pts.append(((x, y, z, yaw), 0.0))
+                self.view_pts.append(((x, y, z, yaw), 0.0, (3, k, j)))
                 if k == L - 1 and j == N - 1:
                     self.path_pts.append(((x, y, z, yaw), (0.0, 0.0, 0.0, 0.0)))
                     self.conns.append(straight_path_3d)
@@ -303,7 +316,7 @@ class BoxPlanner(Planner):
         while i >= 0 and i < M and j >= 0 and j < N:
             x = (-M/2.0 + 0.5 + i)*dl
             y = (-N/2.0 + 0.5 + j)*dh
-            self.view_pts.append(((x, y, z, yaw), -90.0))
+            self.view_pts.append(((x, y, z, yaw), -90.0, (4, j, i)))
             # movimiento horizontal
             if M >= N:
                 if i == 0 or i == M - 1:
@@ -386,7 +399,7 @@ class CylinderPlanner(Planner):
                 x = (self.radius + distance)*cos(theta)
                 y = (self.radius + distance)*sin(theta)
                 yaw = clip_angle(theta + pi)
-                self.view_pts.append(((x, y, z, yaw), 0.0))
+                self.view_pts.append(((x, y, z, yaw), 0.0, (0, k, i)))
                 if i == 0 or i == N - 1:
                     vx = 0.0 if i == N - 1 and k == L - 1 else -sin(theta)
                     vy = 0.0 if i == N - 1 and k == L - 1 else cos(theta)
@@ -408,7 +421,7 @@ class CylinderPlanner(Planner):
                 j = j_aux if i % 2 == 0 else M - 1 - j_aux
                 vel_sign = 1 if i % 2 == 0 else -1
                 y = (-M/2.0 + 0.5 + j)*dl
-                self.view_pts.append(((x, y, z, yaw), -90.0))
+                self.view_pts.append(((x, y, z, yaw), -90.0, (1, i, j)))
                 if j == 0 or j == M - 1:
                     self.path_pts.append(((x, y, z, yaw), (0.0, vel_sign*1.0, 0.0, 0.0)))
                     self.conns.append(straight_path_3d)    
